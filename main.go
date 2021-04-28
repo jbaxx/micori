@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
@@ -82,4 +83,67 @@ func main() {
 	s := NewSchema()
 	s.LoadSchema(f)
 
+	var pelicula = []byte(`{
+        "title": "The Favourite",
+        "year": 2018,
+        "cast": [
+            "Emma Stone",
+            "Rachel Weisz",
+            "Olivia Colman",
+            "Nicholas Hoult",
+            "Joe Alwyn",
+            "Mark Gatiss"
+        ],
+        "genres": [
+            "Biography",
+            "Drrrrramaaa"
+        ]
+    }`)
+
+	p := NewPayload()
+
+	err = json.Unmarshal(pelicula, &p)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println()
+	fmt.Printf("%#v\n", p)
+	fmt.Println()
+	key := "title"
+	value, err := p.GetKey("title")
+	if err != nil {
+		log.WithFields(log.Fields{"key": key}).Warn(err)
+	}
+	fmt.Printf("Value for key %s is: %v\n", key, value)
+}
+
+type Payload struct {
+	// payload interface{}
+	payload map[string]json.RawMessage
+}
+
+func NewPayload() *Payload {
+	return &Payload{}
+}
+
+func (p *Payload) UnmarshalJSON(raw []byte) error {
+	err := json.Unmarshal(raw, &p.payload)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (p *Payload) GetKey(key string) (interface{}, error) {
+	value, ok := p.payload[key]
+	if !ok {
+		return nil, fmt.Errorf("key not found")
+	}
+	var i interface{}
+	if err := json.Unmarshal(value, &i); err != nil {
+		return nil, fmt.Errorf("can't marshal value")
+	}
+	return i, nil
 }
