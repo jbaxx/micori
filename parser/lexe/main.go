@@ -35,6 +35,7 @@ var filename = flag.String("filename", "", "")
 type JsonFile struct {
 	content  *bytes.Buffer
 	filetype JsonType
+	payload  Payload
 }
 
 func NewJsonFile() *JsonFile {
@@ -78,23 +79,25 @@ func (j *JsonFile) getJSONType() JsonType {
 	t := getFirstToken(j.ContentReader())
 	if t == CurlyBrace {
 		fmt.Println("Json Newline")
-		isValidJSONNewline(j.ContentReader())
+		j.isValidJSONNewline()
 		return JsonNewline
 	}
 	if t == SquareBracket {
 		fmt.Println("Json Array")
-		isValidJSONArray(j.ContentReader())
+		j.isValidJSONArray()
 		return JsonArray
 	}
 	return IllegalJSON
 }
-func isValidJSONNewline(r io.Reader) (bool, error) {
+func (j *JsonFile) isValidJSONNewline() (bool, error) {
 
-	d := json.NewDecoder(r)
+	d := json.NewDecoder(j.ContentReader())
 
 	var m map[string]interface{}
 
+	counter := 0
 	for {
+		counter++
 		var v interface{}
 		err := d.Decode(&v)
 		if err == io.EOF {
@@ -107,18 +110,21 @@ func isValidJSONNewline(r io.Reader) (bool, error) {
 		}
 		m = t
 	}
+	fmt.Println("Counter: ", counter)
 	_ = m
 	fmt.Println("Valid Json Newline")
 	return true, nil
 }
 
-func isValidJSONArray(r io.Reader) (bool, error) {
+func (j *JsonFile) isValidJSONArray() (bool, error) {
 
-	d := json.NewDecoder(r)
+	d := json.NewDecoder(j.ContentReader())
 
 	var m []interface{}
 
+	counter := 0
 	for {
+		counter++
 		var v interface{}
 		err := d.Decode(&v)
 		if err == io.EOF {
@@ -131,9 +137,53 @@ func isValidJSONArray(r io.Reader) (bool, error) {
 		}
 		m = t
 	}
+	fmt.Println("Counter: ", counter)
 	_ = m
 	fmt.Println("Valid Json Array")
 	return true, nil
+}
+
+func (j *JsonFile) ParsePayloads() {
+
+	if j.filetype == JsonArray {
+		j.parseJSONArray()
+	}
+	if j.filetype == JsonNewline {
+		j.parseJSONNewline()
+	}
+
+}
+
+func (j *JsonFile) parseJSONArray() error {
+	d := json.NewDecoder(j.ContentReader())
+	for {
+		err := d.Decode(&j.payload.payloads)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+	}
+	j.payload.count = len(j.payload.payloads)
+	return nil
+}
+
+func (j *JsonFile) parseJSONNewline() error {
+	d := json.NewDecoder(j.ContentReader())
+	for {
+		var v map[string]interface{}
+		err := d.Decode(&v)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		j.payload.payloads = append(j.payload.payloads, v)
+	}
+	j.payload.count = len(j.payload.payloads)
+	return nil
 }
 
 func getFirstToken(r io.Reader) TokenType {
@@ -170,6 +220,11 @@ func (j *JsonFile) String() string {
 	return j.content.String()
 }
 
+type Payload struct {
+	payloads []map[string]interface{}
+	count    int
+}
+
 func main() {
 	flag.Parse()
 
@@ -186,16 +241,18 @@ func main() {
 		log.Fatal(err)
 	}
 
-	err = ff.Capture()
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(ff)
+	// err = ff.Capture()
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// fmt.Println(ff)
 
-	err = ff.Capture()
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(ff)
+	// err = ff.Capture()
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// fmt.Println(ff)
+
+	ff.ParsePayloads()
 
 }
