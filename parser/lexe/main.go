@@ -33,9 +33,16 @@ const (
 var filename = flag.String("filename", "", "")
 
 type JsonFile struct {
-	content   *bytes.Buffer
-	filetype  JsonType
-	Marshaled Marshaled
+	content    *bytes.Buffer
+	filetype   JsonType
+	Collection Collection
+	visitor    *Visitor
+}
+
+type Collection struct {
+	payloads    []map[string]interface{}
+	payloadsmap map[int]map[string]interface{}
+	count       int
 }
 
 func NewJsonFile() *JsonFile {
@@ -60,6 +67,17 @@ func (j *JsonFile) ContentReader() io.Reader {
 
 func (j *JsonFile) ContentBytes() []byte {
 	return j.content.Bytes()
+}
+
+func (j *JsonFile) CollectionBytes() []byte {
+	buf := new(bytes.Buffer)
+	enc := json.NewEncoder(buf)
+	for _, v := range j.Collection.payloadsmap {
+		if err := enc.Encode(v); err != nil {
+			log.Println(err)
+		}
+	}
+	return buf.Bytes()
 }
 
 func isWhitespace(ch rune) bool {
@@ -157,7 +175,7 @@ func (j *JsonFile) ParsePayloads() {
 func (j *JsonFile) parseJSONArray() error {
 	d := json.NewDecoder(j.ContentReader())
 	for {
-		err := d.Decode(&j.Marshaled.payloads)
+		err := d.Decode(&j.Collection.payloads)
 		if err == io.EOF {
 			break
 		}
@@ -165,7 +183,11 @@ func (j *JsonFile) parseJSONArray() error {
 			return err
 		}
 	}
-	j.Marshaled.count = len(j.Marshaled.payloads)
+	j.Collection.payloadsmap = make(map[int]map[string]interface{})
+	for index, payload := range j.Collection.payloads {
+		j.Collection.payloadsmap[index] = payload
+	}
+	j.Collection.count = len(j.Collection.payloads)
 	return nil
 }
 
@@ -180,9 +202,13 @@ func (j *JsonFile) parseJSONNewline() error {
 		if err != nil {
 			return err
 		}
-		j.Marshaled.payloads = append(j.Marshaled.payloads, v)
+		j.Collection.payloads = append(j.Collection.payloads, v)
 	}
-	j.Marshaled.count = len(j.Marshaled.payloads)
+	j.Collection.payloadsmap = make(map[int]map[string]interface{})
+	for index, payload := range j.Collection.payloads {
+		j.Collection.payloadsmap[index] = payload
+	}
+	j.Collection.count = len(j.Collection.payloads)
 	return nil
 }
 
@@ -216,8 +242,18 @@ func (j *JsonFile) Capture() error {
 	return nil
 }
 
+func (j *JsonFile) CaptureCollection() error {
+	losbytes, err := capture.CaptureInputFromEditor(j.CollectionBytes(), capture.GetPreferredEditorFromEnvironment)
+	if err != nil {
+		return err
+	}
+	j.content.Reset()
+	j.content.Write(losbytes)
+	return nil
+}
+
 func (j *JsonFile) Subset(start, end int) error {
-	payloads := j.Marshaled.payloads
+	payloads := j.Collection.payloads
 	if end > len(payloads) {
 		return fmt.Errorf("Out of index")
 	}
@@ -237,11 +273,6 @@ func (j *JsonFile) Subset(start, end int) error {
 
 func (j *JsonFile) String() string {
 	return j.content.String()
-}
-
-type Marshaled struct {
-	payloads []map[string]interface{}
-	count    int
 }
 
 type Visitor struct {
@@ -268,6 +299,13 @@ func (v *Visitor) addVisit(key string) {
 	v.addVisit(key)
 }
 
+func (j *JsonFile) AddVisit(key string) {
+	if j.visitor == nil {
+		j.visitor = NewVisitor()
+	}
+	j.visitor.addVisit(key)
+}
+
 func (v *Visitor) addFunc(f func(interface{}) bool) {
 	fmt.Println("adding")
 	if v.next == nil {
@@ -277,7 +315,14 @@ func (v *Visitor) addFunc(f func(interface{}) bool) {
 	v.next.addFunc(f)
 }
 
-func (m *Marshaled) Visit(v *Visitor) {
+func (j *JsonFile) AddFunction(f func(interface{}) bool) {
+	if j.visitor == nil {
+		j.visitor = NewVisitor()
+	}
+	j.visitor.addFunc(f)
+}
+
+func (m *Collection) Visit(v *Visitor) {
 	for _, payload := range m.payloads {
 		value, ok := payload[v.key]
 		fmt.Printf("%s", v.key)
@@ -303,6 +348,10 @@ func (m *Marshaled) Visit(v *Visitor) {
 			fmt.Printf("key not found: %s", v.key)
 		}
 	}
+}
+
+func (j *JsonFile) Visit() {
+	j.Collection.Visit(j.visitor)
 }
 
 func keepVisiting(m map[string]interface{}, v *Visitor) (interface{}, error) {
@@ -356,11 +405,23 @@ func main() {
 	// }
 	// fmt.Println(ff)
 
-	// err = ff.Capture()
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// fmt.Println(ff)
+	err = ff.Capture()
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(ff)
+
+	err = ff.CaptureCollection()
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(ff)
+
+	err = ff.Capture()
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(ff)
 
 	// err = ff.Subset(0, 5)
 	// if err != nil {
@@ -372,7 +433,7 @@ func main() {
 
 	v := NewVisitor()
 	v.addVisit("item")
-	ff.Marshaled.Visit(v)
+	ff.Collection.Visit(v)
 
 	fmt.Println()
 
@@ -385,7 +446,7 @@ func main() {
 		return true
 	}
 	v.addFunc(w)
-	ff.Marshaled.Visit(v)
+	ff.Collection.Visit(v)
 
 	fmt.Println()
 
@@ -397,6 +458,15 @@ func main() {
 		return true
 	}
 	v.addFunc(w)
-	ff.Marshaled.Visit(v)
+	ff.Collection.Visit(v)
+
+	fmt.Println()
+	fmt.Println("###")
+	fmt.Println()
+
+	ff.AddVisit("size")
+	ff.AddVisit("h")
+	ff.AddFunction(w)
+	ff.Visit()
 
 }
