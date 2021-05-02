@@ -33,9 +33,9 @@ const (
 var filename = flag.String("filename", "", "")
 
 type JsonFile struct {
-	content  *bytes.Buffer
-	filetype JsonType
-	payload  Payload
+	content   *bytes.Buffer
+	filetype  JsonType
+	Marshaled Marshaled
 }
 
 func NewJsonFile() *JsonFile {
@@ -157,7 +157,7 @@ func (j *JsonFile) ParsePayloads() {
 func (j *JsonFile) parseJSONArray() error {
 	d := json.NewDecoder(j.ContentReader())
 	for {
-		err := d.Decode(&j.payload.payloads)
+		err := d.Decode(&j.Marshaled.payloads)
 		if err == io.EOF {
 			break
 		}
@@ -165,7 +165,7 @@ func (j *JsonFile) parseJSONArray() error {
 			return err
 		}
 	}
-	j.payload.count = len(j.payload.payloads)
+	j.Marshaled.count = len(j.Marshaled.payloads)
 	return nil
 }
 
@@ -180,9 +180,9 @@ func (j *JsonFile) parseJSONNewline() error {
 		if err != nil {
 			return err
 		}
-		j.payload.payloads = append(j.payload.payloads, v)
+		j.Marshaled.payloads = append(j.Marshaled.payloads, v)
 	}
-	j.payload.count = len(j.payload.payloads)
+	j.Marshaled.count = len(j.Marshaled.payloads)
 	return nil
 }
 
@@ -216,13 +216,99 @@ func (j *JsonFile) Capture() error {
 	return nil
 }
 
+func (j *JsonFile) Subset(start, end int) error {
+	payloads := j.Marshaled.payloads
+	if end > len(payloads) {
+		return fmt.Errorf("Out of index")
+	}
+	p := payloads[start:end]
+	b, err := json.MarshalIndent(p, "", "  ")
+	if err != nil {
+		return err
+	}
+	losbytes, err := capture.CaptureInputFromEditor(b, capture.GetPreferredEditorFromEnvironment)
+	if err != nil {
+		return err
+	}
+	j.content.Reset()
+	j.content.Write(losbytes)
+	return nil
+}
+
 func (j *JsonFile) String() string {
 	return j.content.String()
 }
 
-type Payload struct {
+type Marshaled struct {
 	payloads []map[string]interface{}
 	count    int
+}
+
+type Visitor struct {
+	key  string
+	next *Visitor
+}
+
+func NewVisitor() *Visitor {
+	return &Visitor{}
+}
+
+func (v *Visitor) addVisit(key string) {
+	if v.key == "" {
+		v.key = key
+		return
+	}
+	if v.next == nil {
+		v.next = &Visitor{
+			key: key,
+		}
+		return
+	}
+	v.addVisit(key)
+}
+
+func (m *Marshaled) Visit(v *Visitor) {
+	for _, payload := range m.payloads {
+		value, ok := payload[v.key]
+		fmt.Printf("%s", v.key)
+		if ok && v.next == nil {
+			fmt.Printf(": %v\n", value)
+		}
+		if ok && v.next != nil {
+			valueAsMap, _ := value.(map[string]interface{})
+			val, err := keepVisiting(valueAsMap, v.next)
+			if err != nil {
+				fmt.Println(err)
+			}
+			fmt.Printf(": %v\n", val)
+		}
+		if !ok {
+			fmt.Printf("key not found: %s", v.key)
+		}
+	}
+}
+
+func keepVisiting(m map[string]interface{}, v *Visitor) (interface{}, error) {
+	fmt.Printf(".%s", v.key)
+	if v.next == nil {
+		val, ok := m[v.key]
+		if !ok {
+			return nil, fmt.Errorf("key not found: %s", v.key)
+		}
+		return val, nil
+	}
+
+	val, ok := m[v.key]
+	if !ok {
+		return nil, fmt.Errorf("key not found: %s", v.key)
+	}
+
+	nm, ok := val.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("can't proceed with key %s", v.key)
+	}
+
+	return keepVisiting(nm, v.next)
 }
 
 func main() {
@@ -241,18 +327,44 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// err = ff.Capture()
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// fmt.Println(ff)
-
-	// err = ff.Capture()
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// fmt.Println(ff)
-
 	ff.ParsePayloads()
+
+	// err = ff.Capture()
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// fmt.Println(ff)
+
+	// err = ff.Capture()
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// fmt.Println(ff)
+
+	// err = ff.Subset(0, 5)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// fmt.Println(ff)
+
+	fmt.Println()
+
+	v := NewVisitor()
+	v.addVisit("item")
+	ff.Marshaled.Visit(v)
+
+	fmt.Println()
+
+	v = NewVisitor()
+	v.addVisit("size")
+	v.addVisit("h")
+	ff.Marshaled.Visit(v)
+
+	fmt.Println()
+
+	v = NewVisitor()
+	v.addVisit("size")
+	v.addVisit("uom")
+	ff.Marshaled.Visit(v)
 
 }
