@@ -246,6 +246,7 @@ type Marshaled struct {
 
 type Visitor struct {
 	key  string
+	eval func(interface{}) bool
 	next *Visitor
 }
 
@@ -267,20 +268,36 @@ func (v *Visitor) addVisit(key string) {
 	v.addVisit(key)
 }
 
+func (v *Visitor) addFunc(f func(interface{}) bool) {
+	fmt.Println("adding")
+	if v.next == nil {
+		v.eval = f
+		return
+	}
+	v.next.addFunc(f)
+}
+
 func (m *Marshaled) Visit(v *Visitor) {
 	for _, payload := range m.payloads {
 		value, ok := payload[v.key]
 		fmt.Printf("%s", v.key)
+		// target in first level
 		if ok && v.next == nil {
 			fmt.Printf(": %v\n", value)
+			if v.eval != nil {
+				v.eval(value)
+			}
 		}
+		// still levels to visit
 		if ok && v.next != nil {
 			valueAsMap, _ := value.(map[string]interface{})
 			val, err := keepVisiting(valueAsMap, v.next)
 			if err != nil {
 				fmt.Println(err)
 			}
-			fmt.Printf(": %v\n", val)
+			// do something with val returned
+			_ = val
+			// fmt.Printf(": %v\n", val)
 		}
 		if !ok {
 			fmt.Printf("key not found: %s", v.key)
@@ -294,6 +311,10 @@ func keepVisiting(m map[string]interface{}, v *Visitor) (interface{}, error) {
 		val, ok := m[v.key]
 		if !ok {
 			return nil, fmt.Errorf("key not found: %s", v.key)
+		}
+		fmt.Printf(": %v\n", val)
+		if v.eval != nil {
+			v.eval(val)
 		}
 		return val, nil
 	}
@@ -358,6 +379,12 @@ func main() {
 	v = NewVisitor()
 	v.addVisit("size")
 	v.addVisit("h")
+	w := func(i interface{}) bool {
+		fl := i.(float64)
+		fmt.Printf("greater than 10: %v \n", fl > 10)
+		return true
+	}
+	v.addFunc(w)
 	ff.Marshaled.Visit(v)
 
 	fmt.Println()
@@ -365,6 +392,11 @@ func main() {
 	v = NewVisitor()
 	v.addVisit("size")
 	v.addVisit("uom")
+	w = func(i interface{}) bool {
+		fmt.Printf("suerte: %v \n", i)
+		return true
+	}
+	v.addFunc(w)
 	ff.Marshaled.Visit(v)
 
 }
